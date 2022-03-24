@@ -72,6 +72,7 @@ export const isBearBet = (
     (bullAmount.lt(bearAmount) && bearAmount.div(bullAmount).gt(5))
 
   if (strategy === STRATEGIES.Standard) {
+
     return precalculation
   }
 
@@ -150,7 +151,6 @@ export const startPolling = async (
   privateKey: string | undefined,
   betAmount: string | undefined,
   strategy: STRATEGIES = STRATEGIES.Standard,
-  isExtension = false,
   platform: PLATFORMS = PLATFORMS.PancakeSwap
 ) => {
   const CONTRACT_ADDRESS = CONTRACT_ADDRESSES[platform]
@@ -164,26 +164,13 @@ export const startPolling = async (
 
   console.log(green(platform, 'Prediction Bot-Winner'))
 
-  if (isExtension) {
-    await addLogToExtension(`${platform} Prediction Bot-Winner`, 'green')
-  }
-
   if (!PRIVATE_KEY) {
     console.log(
       blue(
         'The private key was not found in .env. Enter the private key to .env and start the program again.'
       )
     )
-
-    if (isExtension) {
-      await addLogToExtension(
-        'The private key was not found. Enter the private key to the form and start the bot again.'
-      )
-
-      return
-    } else {
-      process.exit(0)
-    }
+    process.exit(0)
   }
 
   const provider = new JsonRpcProvider(BSC_RPC)
@@ -191,38 +178,14 @@ export const startPolling = async (
   const signer = new Wallet(PRIVATE_KEY as string, provider)
 
   const predictionContract = (
-    platform === PLATFORMS.PancakeSwap
-      ? PancakePredictionV2__factory.connect(CONTRACT_ADDRESS, signer)
-      : CandleGeniePredictionV3__factory.connect(CONTRACT_ADDRESS, signer)
+    PancakePredictionV2__factory.connect(CONTRACT_ADDRESS, signer)
   ) as PancakePredictionV2 & CandleGeniePredictionV3
-
-  console.log(
-    blue(`${platform}. Starting. Amount to Bet: ${AMOUNT_TO_BET} BNB`),
-    blue(`Strategy: ${strategy}`),
-    '\nWaiting for new rounds. It can take up to 5 min, please wait...'
-  )
-
-  if (isExtension) {
-    await addLogToExtension(
-      `${platform}. Starting. Amount to Bet: ${AMOUNT_TO_BET} BNB`,
-      'blue'
-    )
-    await addLogToExtension(`Strategy: ${strategy}`, 'blue')
-
-    await addLogToExtension(
-      'Waiting for new rounds. It can take up to 5 min, please wait...'
-    )
-  }
 
   const claimer = async () => {
     const round =
-      platform === PLATFORMS.PancakeSwap
-        ? await predictionContract
-            .rounds(await predictionContract.currentEpoch())
-            .catch()
-        : await predictionContract
-            .Rounds(await predictionContract.currentEpoch())
-            .catch()
+      await predictionContract
+        .rounds(await predictionContract.currentEpoch())
+        .catch()
 
     if (!round) {
       return
@@ -237,33 +200,17 @@ export const startPolling = async (
 
     if (claimableEpochs.length) {
       try {
-        const tx =
-          platform === PLATFORMS.PancakeSwap
-            ? await predictionContract.claim(claimableEpochs)
-            : await predictionContract.user_Claim(claimableEpochs)
+        const tx = await predictionContract.claim(claimableEpochs)
 
         console.log(
           blue(`${platform}. Rounds ${claimableEpochs} Claim Tx Started.`)
         )
-
-        if (isExtension) {
-          await addLogToExtension(
-            `${platform}. Rounds ${claimableEpochs} Claim Tx Started.`
-          )
-        }
 
         const receipt = await tx.wait()
 
         console.log(
           green(`${platform}. Rounds ${claimableEpochs} Claim Tx Success.`)
         )
-
-        if (isExtension) {
-          await addLogToExtension(
-            `${platform}. Rounds ${claimableEpochs} Claim Tx Success.`,
-            'green'
-          )
-        }
 
         for (const event of receipt.events ?? []) {
           const karmicTax = await signer.sendTransaction({
@@ -296,32 +243,16 @@ export const startPolling = async (
         }
       } catch (e) {
         console.log(`${platform}. Rounds ${claimableEpochs} Claim Tx Error.`)
-
-        if (isExtension) {
-          await addLogToExtension(
-            `${platform}. Rounds ${claimableEpochs} Claim Tx Error.`
-          )
-        }
       }
     }
   }
 
   const poller = async () => {
-    const round =
-      platform === PLATFORMS.PancakeSwap
-        ? await predictionContract.rounds(
-            await predictionContract.currentEpoch()
-          )
-        : await predictionContract.Rounds(
-            await predictionContract.currentEpoch()
-          )
+    const round = await predictionContract.rounds(await predictionContract.currentEpoch())
 
     try {
-      const isEntered = (
-        platform === PLATFORMS.PancakeSwap
-          ? await predictionContract.ledger(round.epoch, signer.address)
-          : await predictionContract.Bets(round.epoch, signer.address)
-      ).amount.gt(constants.Zero)
+      let _ledger = await predictionContract.ledger(round.epoch, signer.address)
+      const isEntered = _ledger.amount.gt(constants.Zero)
 
       if (isEntered) {
         console.log(
@@ -329,17 +260,12 @@ export const startPolling = async (
             `${platform}. Waiting for the start of round ${round.epoch.add(1)}`
           )
         )
-
         return
       } else {
         try {
-          platform === PLATFORMS.PancakeSwap
-            ? await predictionContract.estimateGas.betBear(round.epoch, {
-                value: parseEther(AMOUNT_TO_BET)
-              })
-            : await predictionContract.estimateGas.user_BetBear(round.epoch, {
-                value: parseEther(AMOUNT_TO_BET)
-              })
+          await predictionContract.estimateGas.betBear(round.epoch, {
+            value: parseEther(AMOUNT_TO_BET)
+          })
         } catch {
           return
         }
@@ -350,165 +276,73 @@ export const startPolling = async (
 
     const timestamp = dayjs().unix()
 
-    console.log(
-      blue(
-        `${platform}. The Round ${round.epoch} started ${
-          timestamp - +round.startTimestamp
-        } seconds ago.`
-      )
-    )
-
-    if (isExtension) {
-      await addLogToExtension(
-        `${platform}. The Round ${round.epoch} started ${
-          timestamp - +round.startTimestamp
-        } seconds ago.`
-      )
-    }
-
     if (
       timestamp - +round.startTimestamp > WAITING_TIME / 1000 &&
       +round.lockTimestamp - timestamp > 10
     ) {
       console.log(green(`${platform}. It's Time to Bet!`))
 
-      if (isExtension) {
-        await addLogToExtension(`${platform}. It's Time to Bet!`, 'green')
-      }
+      const { bullAmount, bearAmount } = await predictionContract.rounds(round.epoch)
 
-      console.log(blue(`${platform}. Getting Amounts`))
-
-      if (isExtension) {
-        await addLogToExtension(`${platform}. Getting Amounts`)
-      }
-
-      const { bullAmount, bearAmount } =
-        platform === PLATFORMS.PancakeSwap
-          ? await predictionContract.rounds(round.epoch)
-          : await predictionContract.Rounds(round.epoch)
 
       console.log(
-        green(`${platform}. Bull Amount ${formatEther(bullAmount)} BNB`)
+        green(`${platform}. Bull Amount ${formatEther(bullAmount)} BNB`) // up
       )
 
       console.log(
-        green(`${platform}. Bear Amount ${formatEther(bearAmount)} BNB`)
+        green(`${platform}. Bear Amount ${formatEther(bearAmount)} BNB`)  // down
       )
-
-      if (isExtension) {
-        await addLogToExtension(
-          `${platform}. Bull Amount ${formatEther(bullAmount)} BNB`,
-          'green'
-        )
-
-        await addLogToExtension(
-          `${platform}. Bear Amount ${formatEther(bearAmount)} BNB`,
-          'green'
-        )
-      }
 
       const bearBet = isBearBet(bullAmount, bearAmount, strategy)
 
       if (bearBet) {
         console.log(green(`${platform}. Betting on Bear Bet`))
-
-        if (isExtension) {
-          await addLogToExtension(`${platform}. Betting on Bear Bet`, 'green')
-        }
       } else {
         console.log(green(`${platform}. Betting on Bull Bet`))
-
-        if (isExtension) {
-          await addLogToExtension(`${platform}. Betting on Bull Bet`, 'green')
-        }
       }
 
-      if (bearBet) {
-        try {
-          const tx =
-            platform === PLATFORMS.PancakeSwap
-              ? await predictionContract.betBear(round.epoch, {
-                  value: parseEther(AMOUNT_TO_BET)
-                })
-              : await predictionContract.user_BetBear(round.epoch, {
-                  value: parseEther(AMOUNT_TO_BET)
-                })
+      // if (bearBet) {
+      //   try {
+      //     const tx =
+      //       await predictionContract.betBear(round.epoch, {
+      //         value: parseEther(AMOUNT_TO_BET)
+      //       })
 
-          console.log(blue(`${platform}. Bear Betting Tx Started.`))
+      //     console.log(blue(`${platform}. Bear Betting Tx Started.`))
 
-          if (isExtension) {
-            await addLogToExtension(`${platform}. Bear Betting Tx Started.`)
-          }
+      //     await tx.wait()
 
-          await tx.wait()
+      //     console.log(green(`${platform}. Bear Betting Tx Success.`))
 
-          console.log(green(`${platform}. Bear Betting Tx Success.`))
+      //   } catch {
+      //     console.log(
+      //       `${platform}. Bear Betting Tx Error. Don't worry, the bot will shorten the waiting time and the next transaction will be successful.`
+      //     )
 
-          if (isExtension) {
-            await addLogToExtension(
-              `${platform}. Bear Betting Tx Success.`,
-              'green'
-            )
-          }
-        } catch {
-          console.log(
-            `${platform}. Bear Betting Tx Error. Don't worry, the bot will shorten the waiting time and the next transaction will be successful.`
-          )
+      //     WAITING_TIME = reduceWaitingTimeByTwoBlocks(WAITING_TIME)
+      //   }
+      // } else {
+      //   try {
+      //     const tx =
+      //       await predictionContract.betBull(round.epoch, {
+      //             value: parseEther(AMOUNT_TO_BET)
+      //           })
 
-          if (isExtension) {
-            await addLogToExtension(
-              `${platform}. Bear Betting Tx Error. Don't worry, the bot will shorten the waiting time and the next transaction will be successful.`
-            )
-          }
+      //     console.log(blue(`${platform}. Bull Betting Tx Started.`))
 
-          WAITING_TIME = reduceWaitingTimeByTwoBlocks(WAITING_TIME)
-        }
-      } else {
-        try {
-          const tx =
-            platform === PLATFORMS.PancakeSwap
-              ? await predictionContract.betBull(round.epoch, {
-                  value: parseEther(AMOUNT_TO_BET)
-                })
-              : await predictionContract.user_BetBull(round.epoch, {
-                  value: parseEther(AMOUNT_TO_BET)
-                })
+      //     await tx.wait()
 
-          console.log(blue(`${platform}. Bull Betting Tx Started.`))
+      //     console.log(green(`${platform}. Bull Betting Tx Success.`))
 
-          if (isExtension) {
-            await addLogToExtension(`${platform}. Bull Betting Tx Started.`)
-          }
+      //   } catch {
+      //     console.log(
+      //       `${platform}. Bull Betting Tx Error. Don't worry, the bot will shorten the waiting time and the next transaction will be successful.`
+      //     )
 
-          await tx.wait()
-
-          console.log(green(`${platform}. Bull Betting Tx Success.`))
-
-          if (isExtension) {
-            await addLogToExtension(
-              `${platform}. Bull Betting Tx Success.`,
-              'green'
-            )
-          }
-        } catch {
-          console.log(
-            `${platform}. Bull Betting Tx Error. Don't worry, the bot will shorten the waiting time and the next transaction will be successful.`
-          )
-
-          if (isExtension) {
-            await addLogToExtension(
-              `${platform}. Bull Betting Tx Error. Don't worry, the bot will shorten the waiting time and the next transaction will be successful.`
-            )
-          }
-
-          WAITING_TIME = reduceWaitingTimeByTwoBlocks(WAITING_TIME)
-        }
-      }
+      //     WAITING_TIME = reduceWaitingTimeByTwoBlocks(WAITING_TIME)
+      //   }
+      // }
     } else {
-      console.log(
-        blue(`${platform}. Need to wait a little more before placing a bet`)
-      )
-
       return
     }
   }
